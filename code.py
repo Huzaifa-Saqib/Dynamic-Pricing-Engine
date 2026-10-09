@@ -43,3 +43,62 @@ print(df["price_shown"].isnull().sum())
 print(df["price_shown"].describe())
 print((df["price_shown"]==0).sum())
 
+
+#My code starts
+print("\n--- Cleaning competitor_price ---")
+print("Initial nulls:", df["competitor_price"].isnull().sum())
+print("Initial negative values:", (df["competitor_price"] < 0).sum())
+
+
+df["competitor_price"] = df["competitor_price"].abs()
+
+
+df["competitor_price"] = df.groupby("product_id")["competitor_price"].transform(
+    lambda x: x.fillna(x.median())
+)
+
+print("Cleaned nulls:", df["competitor_price"].isnull().sum())
+print("Cleaned negatives:", (df["competitor_price"] < 0).sum())
+print(df["competitor_price"].describe())
+
+
+promo_mapping = {
+    'YES': True, 'Yes': True, 'yes': True, 'Y': True, 'y': True, 
+    'Promo': True, 'TRUE': True, 'True': True, '1': True, 1: True, True: True,
+    'NO': False, 'No': False, 'no': False, 'N': False, 'n': False, 
+    'FALSE': False, 'False': False, '0': False, 0: False, False: False
+}
+
+df["is_promo"] = df["is_promo"].map(promo_mapping).fillna(False).astype(bool)
+
+print("\n--- is_promo Value Counts ---")
+print(df["is_promo"].value_counts(dropna=False))
+
+
+holiday_mapping = {
+    'YES': True, 'Yes': True, 'yes': True, 'Y': True, 'y': True, 
+    'TRUE': True, 'True': True, '1': True, 1: True, True: True,
+    'NO': False, 'No': False, 'no': False, 'N': False, 'n': False, 
+    'FALSE': False, 'False': False, '0': False, 0: False, False: False
+}
+
+df["is_holiday"] = df["is_holiday"].map(holiday_mapping).fillna(False).astype(bool)
+
+print("\n--- is_holiday Value Counts ---")
+print(df["is_holiday"].value_counts(dropna=False))
+
+
+print("\n--- Cleaning quantity ---")
+print("Initial nulls:", df["quantity"].isnull().sum())
+print("Initial invalid (<= 0):", (df["quantity"] <= 0).sum())
+
+
+calc_qty = (df["revenue"] / df["price_shown"]).round()
+invalid_qty_mask = (df["quantity"] <= 0) | (df["quantity"].isna())
+
+df.loc[invalid_qty_mask, "quantity"] = calc_qty[invalid_qty_mask]
+df["quantity"] = df["quantity"].fillna(0).astype(int)
+
+print("Cleaned nulls:", df["quantity"].isnull().sum())
+print("Cleaned negative count:", (df["quantity"] < 0).sum())
+print(df["quantity"].describe())
