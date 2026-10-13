@@ -163,23 +163,13 @@ y_train_logi = logi_df.loc[train_all, "bought"]
 X_test_logi = logi_df.loc[test_all, feature_cols]
 y_test_logi = logi_df.loc[test_all, "bought"]
 
-if len(X_train_logi) == 0 or len(X_test_logi) == 0:
-    raise ValueError("Insufficient data before or after 2025-01-01 for model training and testing.")
-
-if y_train_logi.nunique() < 2:
-    raise ValueError("The selected product's training data must contain both bought outcomes (0 and 1).")
-
 logi_model = LogisticRegression(max_iter=1000, C=100)
 logi_model.fit(X_train_logi, y_train_logi)
 
 logi_prob_test = logi_model.predict_proba(X_test_logi)[:, 1]
 
 print("\n--- LOGISTIC REGRESSION PERFORMANCE ---")
-
-if y_test_logi.nunique() == 2:
-    print("AUC:", roc_auc_score(y_test_logi, logi_prob_test))
-else:
-    print("AUC: Cannot be calculated because the test data contains only one class.")
+print("AUC:", roc_auc_score(y_test_logi, logi_prob_test))
 
 reg_df = df[
     (df["product_id"] == selected_product) & (df["bought"] == 1)
@@ -201,15 +191,6 @@ X_train, X_test = X.loc[train_date], X.loc[test_date]
 y_train = y.loc[train_date]
 y_test = y.loc[test_date]
 
-print("\n--- QUANTITY VALIDATION ---")
-print("Training rows:", len(y_train))
-print("Training quantities <= 0:", (y_train <= 0).sum())
-print("Training missing quantities:", y_train.isna().sum())
-print("Testing quantities <= 0:", (y_test <= 0).sum())
-print("Testing missing quantities:", y_test.isna().sum())
-print("\nInvalid training quantities:")
-print(y_train[y_train <= 0].head(10))
-
 valid_train = y_train.notna() & (y_train > 0)
 valid_test = y_test.notna() & (y_test > 0)
 
@@ -217,9 +198,6 @@ X_train = X_train.loc[valid_train]
 y_train = y_train.loc[valid_train]
 X_test = X_test.loc[valid_test]
 y_test = y_test.loc[valid_test]
-
-if len(X_train) == 0 or len(X_test) == 0:
-    raise ValueError("Insufficient positive-quantity data for regression training or testing.")
 
 y_train_log = np.log(y_train)
 y_test_log = np.log(y_test)
@@ -240,6 +218,7 @@ print("\n--- DEMAND ELASTICITY COEFFICIENTS ---")
 for col, coef in zip(feature_cols, reg_model.coef_):
     print(f"{col} coefficient: {coef:.2f}")
 
+current_price = float(input("Enter current selling price: "))
 cost_price = float(input("Enter unit cost of the product: "))
 competitor_price = float(input("Enter competitor price of the product: "))
 is_promo = int(input("Is a promotion active? (1 = Yes, 0 = No): "))
@@ -258,11 +237,18 @@ if cost_price <= 0 or competitor_price <= 0:
 if is_promo not in [0, 1] or is_holiday not in [0, 1]:
     raise ValueError("Promotion and holiday must be 1 or 0.")
 
-print("\n--- CONFIRMED BUSINESS INPUTS ---")
+print("\n--- BUSINESS INPUTS ---")
 print("Product:", selected_product)
+print("Current Price:", current_price)
 print("Unit cost:", cost_price)
 print("Competitor price:", competitor_price)
 print("Promotion active:", is_promo)
 print("Holiday scenario:", is_holiday)
 print("Pricing date:", pricing_date.date())
 print("Peak season:", is_peak_season)
+
+price_change_pct = 25
+price_step = 25
+
+min_price = current_price * (1 - price_change_pct/100 )
+max_price = current_price * (1 + price_change_pct/100 )
