@@ -206,12 +206,22 @@ reg_model = LinearRegression()
 reg_model.fit(X_train, y_train_log)
 
 y_pred_log = reg_model.predict(X_test)
-y_pred = np.exp(y_pred_log)
+train_pred_log = reg_model.predict(X_train)
+residuals = y_train_log - train_pred_log
 
+smearing_factor = np.mean(np.exp(residuals))
+y_pred = np.exp(y_pred_log) * smearing_factor
+
+print("Smearing factor:", smearing_factor)
 print("\n--- LOG-LOG REGRESSION PERFORMANCE ---")
 print("MAE:", mean_absolute_error(y_test_log, y_pred_log))
 print("RMSE:", np.sqrt(mean_squared_error(y_test_log, y_pred_log)))
 print("R²:", r2_score(y_test_log, y_pred_log))
+
+print("\n--- QUANTITY METRICS (ORIGINAL SCALE) ---")
+print("MAE:", mean_absolute_error(y_test, y_pred))
+print("RMSE:", np.sqrt(mean_squared_error(y_test, y_pred)))
+print("R²:", r2_score(y_test, y_pred))
 
 print("\n--- DEMAND ELASTICITY COEFFICIENTS ---")
 
