@@ -286,4 +286,3 @@ price_step = 25
  
 min_price = current_price * (1 - price_change_pct/100 )
 max_price = current_price * (1 + price_change_pct/100 )
- 
