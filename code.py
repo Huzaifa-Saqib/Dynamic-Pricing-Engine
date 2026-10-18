@@ -286,3 +286,126 @@ price_step = 25
  
 min_price = current_price * (1 - price_change_pct/100 )
 max_price = current_price * (1 + price_change_pct/100 )
+
+
+class PriceSimulator:
+    def __init__(
+        self,
+        logi_model,
+        reg_model,
+        smearing_factor,
+        cost_price,
+        competitor_price,
+        is_promo,
+        is_holiday,
+        is_peak_season,
+    ):
+        self.logi_model = logi_model
+        self.reg_model = reg_model
+        self.smearing_factor = smearing_factor
+        self.cost_price = cost_price
+        self.competitor_price = competitor_price
+        self.is_promo = is_promo
+        self.is_holiday = is_holiday
+        self.is_peak_season = is_peak_season
+
+    def generate_price_grid(self, min_price, max_price, price_step):
+        if price_step <= 0:
+            raise ValueError("Price step must be positive.")
+        if min_price <= 0 or max_price < min_price:
+            raise ValueError("Price range must be positive and ordered.")
+
+        candidate_prices = np.arange(
+            min_price,
+            max_price + price_step * 1e-9,
+            price_step,
+        )
+        rows = []
+
+        for candidate_price in candidate_prices:
+            log_price = np.log(candidate_price)
+            features = pd.DataFrame([{
+                "log_price": log_price,
+                "log_cp": np.log(self.competitor_price),
+                "is_promo": self.is_promo,
+                "is_holiday": self.is_holiday,
+                "is_peak_season": self.is_peak_season,
+            }], columns=feature_cols)
+
+            conversion_probability = self.logi_model.predict_proba(features)[0, 1]
+            log_qty = self.reg_model.predict(features)[0]
+            predicted_quantity = np.exp(log_qty) * self.smearing_factor
+            expected_quantity = conversion_probability * predicted_quantity
+            expected_revenue = candidate_price * expected_quantity
+            expected_profit = (candidate_price - self.cost_price) * expected_quantity
+
+            rows.append({
+                "price": candidate_price,
+                "log_price": log_price,
+                "conversion_probability": conversion_probability,
+                "log_quantity_prediction": log_qty,
+                "predicted_quantity": predicted_quantity,
+                "expected_quantity": expected_quantity,
+                "expected_revenue": expected_revenue,
+                "expected_profit": expected_profit,
+            })
+
+        return pd.DataFrame(rows)
+
+
+def get_hamza_guardrail_inputs():
+    max_jump_pct = float(input("Enter maximum price jump percentage: "))
+    absolute_ceiling = float(input("Enter absolute price ceiling: "))
+    min_dollar_change = float(input("Enter minimum dollar change from baseline: "))
+    max_dollar_change = float(input("Enter maximum dollar change from baseline: "))
+
+    if max_jump_pct < 0 or absolute_ceiling <= 0:
+        raise ValueError("Jump percentage must be non-negative and ceiling must be positive.")
+    if min_dollar_change < 0 or max_dollar_change < min_dollar_change:
+        raise ValueError("Dollar change limits must be non-negative and ordered.")
+
+    return max_jump_pct, absolute_ceiling, min_dollar_change, max_dollar_change
+
+
+def check_price_guardrails(
+    candidate_price_row,
+    baseline_price,
+    max_jump_pct,
+    absolute_ceiling,
+    min_dollar_change,
+    max_dollar_change,
+):
+    candidate_price = float(candidate_price_row["price"])
+
+    if candidate_price > absolute_ceiling:
+        return False, "Price exceeds the absolute ceiling."
+
+    price_change = abs(candidate_price - baseline_price)
+    price_change_pct = price_change / baseline_price * 100
+    if price_change_pct > max_jump_pct:
+        return False, "Price change exceeds the maximum jump percentage."
+    if price_change < min_dollar_change or price_change > max_dollar_change:
+        return False, "Price change falls outside the dollar change limits."
+
+    return True, ""
+
+
+hamza_guardrail_inputs = get_hamza_guardrail_inputs()
+price_simulator = PriceSimulator(
+    logi_model,
+    reg_model,
+    smearing_factor,
+    cost_price,
+    competitor_price,
+    is_promo,
+    is_holiday,
+    is_peak_season,
+)
+raw_price_grid = price_simulator.generate_price_grid(
+    min_price,
+    max_price,
+    price_step,
+)
+
+print("\n--- RAW PRICE GRID ---")
+print(raw_price_grid)
