@@ -280,13 +280,13 @@ logi_model, reg_model, smearing_factor = train_models(df, selected_product)
 (current_price, cost_price, competitor_price,
  is_promo, is_holiday, pricing_date, is_peak_season) = get_inputs(selected_product)
  
-price_change_pct = 25
-price_step = current_price * 0.01 
+price_change_pct = 2
+price_step = current_price * 0.02
  
 min_price = current_price * (1 - price_change_pct/100 )
 max_price = current_price * (1 + price_change_pct/100 )
 
-# Simulate Prices
+# SIMULATOR
 
 def simulate_price(
     candidate_price,
@@ -348,7 +348,7 @@ def simulate_price(
         "gross_margin_pct": gross_margin
     }
 
-# Simulate Candidate Prices
+# SIMULATION
 
 candidate_prices = np.arange(
     min_price, max_price + price_step, price_step
@@ -380,11 +380,21 @@ results_df = pd.DataFrame(simulation_results)
 print("\n--- CANDIDATE PRICE SIMULATION RESULTS ---")
 print(results_df.round(1).to_string(index=False))
 
-avg_price = (
-    df.groupby("product_id")["price_shown"]
-    .mean()
-    .round(2)
-    .sort_values(ascending=False)
-)
+# GUARDRAILS
 
-print(avg_price)
+def get_guardrails():
+    guardrails = {}
+
+
+
+
+
+
+
+
+
+
+
+
+
+    return guardrails
