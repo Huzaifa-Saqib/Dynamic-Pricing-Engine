@@ -384,17 +384,30 @@ print(results_df.round(1).to_string(index=False))
 
 def get_guardrails():
     guardrails = {}
+    while True:
+        try:
+            max_jump_pct = float(input("Enter maximum percentage price change (max_jump_pct): "))
+            min_dollar_change = float(input("Enter minimum price change in rupees (min_dollar_change): "))
+            max_dollar_change = float(input("Enter maximum price change in rupees (max_dollar_change): "))
 
+            if max_jump_pct <= 0:
+                print("Validation Error: max_jump_pct must be greater than 0.")
+            elif min_dollar_change < 0:
+                print("Validation Error: min_dollar_change cannot be negative.")
+            elif max_dollar_change <= 0:
+                print("Validation Error: max_dollar_change must be greater than 0.")
+            elif max_dollar_change < min_dollar_change:
+                print("Validation Error: max_dollar_change must be greater than or equal to min_dollar_change.")
+            else:
+                break
+        except ValueError:
+            print("Validation Error: Please enter valid numbers.")
 
-
-
-
-
-
-
-
-
-
+    guardrails = {
+        "max_jump_pct": max_jump_pct,
+        "min_dollar_change": min_dollar_change,
+        "max_dollar_change": max_dollar_change
+    }
 
 
     return guardrails
