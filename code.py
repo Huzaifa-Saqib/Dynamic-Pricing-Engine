@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
- 
+
+# EDA and Data Cleaning
+
 df = pd.read_excel("pricepilot_sales_data.xlsx")
  
 print(df.head())
@@ -132,6 +134,8 @@ print(df.isnull().sum())
 print(df.describe())
 print(df.shape)
 print(df.head(20))
+
+# SELECT PRODUCT
  
 available_products = sorted(df["product_id"].dropna().unique())
  
@@ -147,8 +151,31 @@ if selected_product not in available_products:
 feature_cols = [
     "log_price", "log_cp", "is_promo", "is_holiday", "is_peak_season"
 ]
- 
- 
+
+counts = df["bought"].value_counts()
+plt.figure(figsize=(6, 4))
+plt.bar(counts.index.map({0: "No", 1: "Yes"}), counts.values, edgecolor="black", width=0.5)
+plt.title("Bought vs Not Bought")
+plt.xlabel("Bought Status")
+plt.ylabel("Count of Sessions")
+plt.tight_layout()
+plt.show()
+
+qty = df.loc[(df["bought"] == 1) & (df["quantity"] > 0), "quantity"]
+plt.figure(figsize=(12, 4))
+plt.subplot(1, 2, 1)
+plt.hist(qty, bins=10, edgecolor="black")
+plt.title("Quantity: Original Distribution")
+plt.xlabel("Quantity Purchased")
+plt.ylabel("Frequency")
+plt.subplot(1, 2, 2)
+plt.hist(np.log(qty), bins=10, edgecolor="black")
+plt.title("Quantity: Log-Transformed Distribution")
+plt.xlabel("Log(Quantity Purchased)")
+plt.ylabel("Frequency")
+plt.tight_layout()
+plt.show()
+
 # MODELS
  
 def train_models(df, selected_product):
@@ -238,6 +265,10 @@ def train_models(df, selected_product):
         print(f"{col} coefficient: {coef:.2f}")
  
     return logi_model, reg_model, smearing_factor
+
+#VISUALS
+
+
 
 # INPUTS
  
