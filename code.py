@@ -159,7 +159,7 @@ plt.title("Bought vs Not Bought")
 plt.xlabel("Bought Status")
 plt.ylabel("Count of Sessions")
 plt.tight_layout()
-plt.show()
+#plt.show()
 
 qty = df.loc[(df["bought"] == 1) & (df["quantity"] > 0), "quantity"]
 plt.figure(figsize=(12, 4))
@@ -174,7 +174,7 @@ plt.title("Quantity: Log-Transformed Distribution")
 plt.xlabel("Log(Quantity Purchased)")
 plt.ylabel("Frequency")
 plt.tight_layout()
-plt.show()
+#plt.show()
 
 # MODELS
  
@@ -265,10 +265,6 @@ def train_models(df, selected_product):
         print(f"{col} coefficient: {coef:.2f}")
  
     return logi_model, reg_model, smearing_factor
-
-#VISUALS
-
-
 
 # INPUTS
  
@@ -417,28 +413,12 @@ def get_guardrails():
     guardrails = {}
     while True:
         try:
-            max_jump_pct = float(input("Enter maximum percentage price change (max_jump_pct): "))
-            min_dollar_change = float(input("Enter minimum price change in rupees (min_dollar_change): "))
-            max_dollar_change = float(input("Enter maximum price change in rupees (max_dollar_change): "))
-
-            if max_jump_pct <= 0:
-                print("Validation Error: max_jump_pct must be greater than 0.")
-            elif min_dollar_change < 0:
-                print("Validation Error: min_dollar_change cannot be negative.")
-            elif max_dollar_change <= 0:
-                print("Validation Error: max_dollar_change must be greater than 0.")
-            elif max_dollar_change < min_dollar_change:
-                print("Validation Error: max_dollar_change must be greater than or equal to min_dollar_change.")
-            else:
+            
                 break
         except ValueError:
             print("Validation Error: Please enter valid numbers.")
 
-    guardrails = {
-        "max_jump_pct": max_jump_pct,
-        "min_dollar_change": min_dollar_change,
-        "max_dollar_change": max_dollar_change
-    }
+    guardrails = {}
 
 
     return guardrails
