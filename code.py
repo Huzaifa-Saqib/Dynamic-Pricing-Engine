@@ -411,8 +411,6 @@ print(results_df.round(1).to_string(index=False))
 
 def get_guardrails():
     guardrails = {}
-
-    # Guardrail 1: absolute price ceiling
     while True:
         try:
             absolute_ceiling = float(input(
@@ -425,7 +423,6 @@ def get_guardrails():
         except ValueError:
             print("Validation Error: Please enter valid numbers.")
 
-    # Guardrail 2: minimum gross margin floor
     while True:
         try:
             min_margin_floor_pct = float(input(
@@ -438,60 +435,9 @@ def get_guardrails():
         except ValueError:
             print("Validation Error: Please enter valid numbers.")
 
-    # Guardrail 3: optimization goal
-    while True:
-        optimization_metric = input(
-            "Optimize for profit or volume? (profit/volume): "
-        ).strip().lower()
-        if optimization_metric in ["profit", "volume"]:
-            break
-        print("Validation Error: Please type 'profit' or 'volume'.")
-
     guardrails = {
         "absolute_ceiling": absolute_ceiling,
-        "min_margin_floor_pct": min_margin_floor_pct,
-        "optimization_metric": optimization_metric
-    }
+        "min_margin_floor_pct": min_margin_floor_pct
+            }
 
     return guardrails
-
-
-# GUARDRAILS: PRICE CEILING, MARGIN FLOOR, OPTIMIZATION GOAL
-
-OPTIMIZATION_COLUMNS = {
-    "profit": "expected_gross_profit_per_session",
-    "volume": "expected_quantity_per_session"
-}
-
-
-def check_absolute_ceiling(price_row, guardrails):
-    if price_row["candidate_price"] > guardrails["absolute_ceiling"]:
-        return False, (
-            f"Price {price_row['candidate_price']:,.0f} exceeds the "
-            f"absolute ceiling {guardrails['absolute_ceiling']:,.0f}"
-        )
-    return True, ""
-
-
-def check_margin_floor(price_row, guardrails):
-    if price_row["gross_margin_pct"] < guardrails["min_margin_floor_pct"]:
-        return False, (
-            f"Gross margin {price_row['gross_margin_pct']:.2f}% is below "
-            f"the minimum {guardrails['min_margin_floor_pct']:.2f}%"
-        )
-    return True, ""
-
-
-def get_optimization_column(guardrails):
-    return OPTIMIZATION_COLUMNS[guardrails["optimization_metric"]]
-
-
-def select_best_price(audited_df, guardrails):
-    passed_df = audited_df[audited_df["passed_guardrails"]]
-
-    if passed_df.empty:
-        return None
-
-    optimization_column = get_optimization_column(guardrails)
-    return passed_df.loc[passed_df[optimization_column].idxmax()]
-
