@@ -411,15 +411,47 @@ print(results_df.round(1).to_string(index=False))
 
 def get_guardrails():
     guardrails = {}
+
+    # Guardrail 1: absolute price ceiling
     while True:
         try:
-            
-                break
+            absolute_ceiling = float(input(
+                "Enter absolute price ceiling (maximum permitted selling price): "
+            ))
+            if absolute_ceiling <= 0:
+                print("Validation Error: Absolute ceiling must be greater than 0.")
+                continue
+            break
         except ValueError:
             print("Validation Error: Please enter valid numbers.")
 
-    guardrails = {}
+    # Guardrail 2: minimum gross margin floor
+    while True:
+        try:
+            min_margin_floor_pct = float(input(
+                "Enter minimum gross margin % (of selling price): "
+            ))
+            if min_margin_floor_pct < 0 or min_margin_floor_pct >= 100:
+                print("Validation Error: Minimum margin must be between 0 and 99.")
+                continue
+            break
+        except ValueError:
+            print("Validation Error: Please enter valid numbers.")
 
+    # Guardrail 3: optimization goal
+    while True:
+        optimization_metric = input(
+            "Optimize for profit or volume? (profit/volume): "
+        ).strip().lower()
+        if optimization_metric in ["profit", "volume"]:
+            break
+        print("Validation Error: Please type 'profit' or 'volume'.")
+
+    guardrails = {
+        "absolute_ceiling": absolute_ceiling,
+        "min_margin_floor_pct": min_margin_floor_pct,
+        "optimization_metric": optimization_metric
+    }
 
     return guardrails
 
@@ -430,50 +462,6 @@ OPTIMIZATION_COLUMNS = {
     "profit": "expected_gross_profit_per_session",
     "volume": "expected_quantity_per_session"
 }
-
-
-def read_number(prompt, minimum=None, maximum=None):
-    while True:
-        try:
-            value = float(input(prompt))
-        except ValueError:
-            print("Validation Error: Please enter a valid number.")
-            continue
-
-        if minimum is not None and value < minimum:
-            print(f"Validation Error: Value must be at least {minimum}.")
-        elif maximum is not None and value > maximum:
-            print(f"Validation Error: Value must be at most {maximum}.")
-        else:
-            return value
-
-
-def get_ceiling_margin_goal_inputs():
-    absolute_ceiling = read_number(
-        "Enter absolute price ceiling (maximum permitted selling price): ",
-        minimum=1
-    )
-
-    min_margin_floor_pct = read_number(
-        "Enter minimum gross margin % (of selling price): ",
-        minimum=0,
-        maximum=99
-    )
-
-    while True:
-        optimization_metric = input(
-            "Optimize for profit or volume? (profit/volume): "
-        ).strip().lower()
-
-        if optimization_metric in OPTIMIZATION_COLUMNS:
-            break
-        print("Validation Error: Please type 'profit' or 'volume'.")
-
-    return {
-        "absolute_ceiling": absolute_ceiling,
-        "min_margin_floor_pct": min_margin_floor_pct,
-        "optimization_metric": optimization_metric
-    }
 
 
 def check_absolute_ceiling(price_row, guardrails):
