@@ -3,6 +3,7 @@ import numpy as np
 import openpyxl
 import scipy
 import random
+import statsmodels.api as sm
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression, LogisticRegression
@@ -307,8 +308,8 @@ logi_model, reg_model, smearing_factor = train_models(df, selected_product)
 (current_price, cost_price, competitor_price,
  is_promo, is_holiday, pricing_date, is_peak_season) = get_inputs(selected_product)
  
-price_change_pct = 2
-price_step = current_price * 0.02
+price_change_pct = 5
+price_step = current_price * 0.01
  
 min_price = current_price * (1 - price_change_pct/100 )
 max_price = current_price * (1 + price_change_pct/100 )
@@ -421,7 +422,7 @@ def get_guardrails():
                 continue
             break
         except ValueError:
-            print("Validation Error: Please enter valid numbers.")
+            print("Validation Error: Please enter valid number.")
 
     while True:
         try:
@@ -433,11 +434,161 @@ def get_guardrails():
                 continue
             break
         except ValueError:
-            print("Validation Error: Please enter valid numbers.")
+            print("Validation Error: Please enter valid number.")
+    
+    while True:
+        try:
+            comp_index_pct = float(input(
+                "Enter Competitor Index %: "
+            ))
+            if comp_index_pct < 0 or comp_index_pct >= 100:
+                print ("Validation Error: Competitor Index % must be between 0 and 99.")
+                continue
+            break
+        except ValueError:
+            print("Validation Error: Please enter valid number.")
+    
+    while True:
+        try:
+            max_revenue_drawdown_pct = float(input(
+                "Enter maximum revenue drawdown %: "
+            ))
+            if max_revenue_drawdown_pct < 0 or max_revenue_drawdown_pct > 100:
+                print("Validation Error: Enter a value between 0 and 100.")
+                continue 
+            break
+        except ValueError:
+            print("Validation Error: Please enter a valid number.")
+
+    while True:
+        try:
+            min_conversion_floor_pct = float(input(
+                "Enter minimum conversion rate %: "
+            ))
+            if min_conversion_floor_pct < 0 or min_conversion_floor_pct > 100:
+                print("Validation Error: Enter a value between 0 and 100.")
+                continue
+            break
+        except ValueError:
+            print("Validation Error: Please enter a valid number.")
+
+    while True:
+        try:
+            max_elasticity_variance_limit = float(input(
+                "Enter maximum elasticity variance limit: "
+            ))
+            if max_elasticity_variance_limit < 0:
+                print("Validation Error: Variance limit cannot be negative.")
+                continue
+            break
+        except ValueError:
+            print("Validation Error: Please enter a valid number.")
+
 
     guardrails = {
         "absolute_ceiling": absolute_ceiling,
-        "min_margin_floor_pct": min_margin_floor_pct
-            }
+        "min_margin_floor_pct": min_margin_floor_pct,
+        "competitor_index_pct": comp_index_pct,
+        "max_revenue_drawdown_pct": max_revenue_drawdown_pct,
+        "min_conversion_floor_pct": min_conversion_floor_pct,
+        "max_elasticity_variance_limit": max_elasticity_variance_limit
+    }
 
     return guardrails
+
+
+# APPLY GUARDRAILS
+guardrails = get_guardrails()
+
+
+def elasticity_std_error(df, selected_product):
+
+    d = df[(df["product_id"] == selected_product) & (df["bought"] == 1)].copy()
+    d["log_price"] = np.log(d["price_shown"])
+    d["log_cp"] = np.log(d["competitor_price"])
+    d["is_peak_season"] = d["date"].dt.month.isin([11, 12]).astype(int)
+
+    d = d[(d["date"] < "2025-01-01") & (d["quantity"] > 0)]
+
+    X = sm.add_constant(d[feature_cols])    
+    y = np.log(d["quantity"])       
+    model = sm.OLS(y, X).fit()
+    elasticity_se = model.bse["log_price"]
+    return float(elasticity_se)
+    print(elasticity_se)
+
+
+def apply_guardrails(results_df, guardrails, current_price, cost_price,
+                     competitor_price, elasticity_se):
+    g = results_df.copy()
+
+    baseline_idx = (g["candidate_price"] - current_price).abs().idxmin()
+    baseline_revenue = g.loc[baseline_idx, "expected_revenue_per_session"]
+
+    g["unit_margin_pct"] = (g["candidate_price"] - cost_price) / g["candidate_price"] * 100
+    g["competitor_dev_pct"] = (g["candidate_price"] - competitor_price).abs() / competitor_price * 100
+    g["conversion_pct"] = g["purchase_probability"] * 100
+
+    if baseline_revenue > 0:
+        g["revenue_drawdown_pct"] = (
+            (baseline_revenue - g["expected_revenue_per_session"]) / baseline_revenue * 100
+        )
+    else:
+        g["revenue_drawdown_pct"] = 0.0
+
+    g["elasticity_se"] = elasticity_se
+
+    g["ok_ceiling"] = g["candidate_price"] <= guardrails["absolute_ceiling"]
+    g["ok_margin"] = g["unit_margin_pct"] >= guardrails["min_margin_floor_pct"]
+    g["ok_competitor"] = g["competitor_dev_pct"] <= guardrails["competitor_index_pct"]
+    g["ok_drawdown"] = g["revenue_drawdown_pct"] <= guardrails["max_revenue_drawdown_pct"]
+    g["ok_conversion"] = g["conversion_pct"] >= guardrails["min_conversion_floor_pct"]
+    g["ok_elasticity"] = g["elasticity_se"] <= guardrails["max_elasticity_variance_limit"]
+
+    check_cols = ["ok_ceiling", "ok_margin", "ok_competitor",
+                  "ok_drawdown", "ok_conversion", "ok_elasticity"]
+    g["passes_all"] = g[check_cols].all(axis=1)
+
+    labels = {
+        "ok_ceiling": "ceiling",
+        "ok_margin": "margin",
+        "ok_competitor": "competitor index",
+        "ok_drawdown": "revenue drawdown",
+        "ok_conversion": "conversion",
+        "ok_elasticity": "elasticity variance",
+    }
+    g["violations"] = g[check_cols].apply(
+        lambda row: ", ".join(labels[c] for c in check_cols if not row[c]), axis=1
+    )
+
+    valid_df = g[g["passes_all"]].copy()
+    rejected_df = g[~g["passes_all"]].copy()
+    return valid_df, rejected_df
+
+
+elasticity_se = elasticity_std_error(df, selected_product)
+print(f"\nElasticity (log_price) standard error: {elasticity_se:.4f}")
+
+valid_df, rejected_df = apply_guardrails(
+    results_df, guardrails, current_price, cost_price,
+    competitor_price, elasticity_se
+)
+
+display_cols = [
+    "candidate_price", "purchase_probability", "expected_quantity_per_session",
+    "expected_revenue_per_session", "expected_gross_profit_per_session",
+    "unit_margin_pct"
+]
+
+print("\n--- PRICES REMOVED BY GUARDRAILS ---")
+if rejected_df.empty:
+    print("None. All candidate prices passed.")
+else:
+    print(rejected_df[["candidate_price", "violations"]].to_string(index=False))
+
+print("\n--- PRICES REMAINING AFTER GUARDRAILS ---")
+if valid_df.empty:
+    print("No candidate price satisfies all guardrails.")
+else:
+    print(valid_df[display_cols].round(2).to_string(index=False))
+
