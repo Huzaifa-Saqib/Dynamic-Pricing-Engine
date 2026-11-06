@@ -136,6 +136,28 @@ print(df.describe())
 print(df.shape)
 print(df.head(20))
 
+buyers = df[(df["bought"] == 1) & (df["quantity"] > 0)]
+
+summary = (
+    df.groupby("product_id")
+      .agg(
+          sessions=("bought", "size"),
+          conversion_rate=("bought", "mean"),
+          avg_price=("price_shown", "mean"),
+      )
+      .join(
+          buyers.groupby("product_id")["quantity"]
+                .agg(avg_qty_if_bought="mean",
+                     median_qty_if_bought="median",
+                     max_qty_if_bought="max")
+      )
+      .round(3)
+      .reset_index()
+)
+
+print("\n--- QUANTITY IF BOUGHT, BY PRODUCT ---")
+print(summary.to_string(index=False))
+
 # SELECT PRODUCT
  
 available_products = sorted(df["product_id"].dropna().unique())
@@ -441,7 +463,7 @@ def get_guardrails():
             comp_index_pct = float(input(
                 "Enter Competitor Index %: "
             ))
-            if comp_index_pct < 0 or comp_index_pct >= 100:
+            if comp_index_pct < 0:
                 print ("Validation Error: Competitor Index % must be between 0 and 99.")
                 continue
             break
@@ -515,3 +537,52 @@ def elasticity_std_error(df, selected_product):
     model = sm.OLS(y, X).fit()
     elasticity_se = model.bse["log_price"]
     return float(elasticity_se)
+
+def apply_guardrails(results_df, guardrails, current_price, competitor_price, elasticity_se):
+
+    valid_prices = results_df.copy()
+    valid_prices["competitor_index_pct"] = (valid_prices["candidate_price"] / competitor_price) * 100
+    current_price_row = (valid_prices["candidate_price"] - current_price).abs().idxmin()
+    current_revenue = valid_prices.loc[current_price_row, "expected_revenue_per_session"]
+
+    if current_revenue > 0:
+
+        valid_prices["revenue_drawdown_pct"] = ((current_revenue - valid_prices["expected_revenue_per_session"])/ current_revenue) * 100
+        valid_prices["revenue_drawdown_pct"] = (valid_prices["revenue_drawdown_pct"].clip(lower=0))
+
+    else:
+        valid_prices["revenue_drawdown_pct"] = 0
+
+    valid_prices["conversion_rate_pct"] = (
+    valid_prices["purchase_probability"] * 100)
+
+    valid_prices = valid_prices[
+    (valid_prices["candidate_price"] <= guardrails["absolute_ceiling"])
+    & (valid_prices["gross_margin_pct"] >= guardrails["min_margin_floor_pct"])
+    & (valid_prices["competitor_index_pct"] <= guardrails["competitor_index_pct"])
+    & (valid_prices["revenue_drawdown_pct"] <= guardrails["max_revenue_drawdown_pct"])
+    & (valid_prices["conversion_rate_pct"] >= guardrails["min_conversion_floor_pct"])
+    & (elasticity_se <= guardrails["max_elasticity_variance_limit"])
+    ]
+
+    print("\n--- VALID PRICES AFTER APPLYING ALL GUARDRAILS ---")
+
+    if valid_prices.empty:
+        print("No valid prices found.")
+    else:
+        valid_cols = [
+            "candidate_price",
+            "purchase_probability",
+            "expected_quantity_if_bought",
+            "expected_quantity_per_session",
+            "expected_revenue_per_session",
+            "expected_gross_profit_per_session",
+            "gross_margin_pct"
+        ]
+        print(valid_prices[valid_cols].round(2).to_string(index=False))
+    return valid_prices
+
+elasticity_se = elasticity_std_error(df, selected_product)
+valid_prices = apply_guardrails(
+    results_df, guardrails, current_price, competitor_price, elasticity_se
+)
