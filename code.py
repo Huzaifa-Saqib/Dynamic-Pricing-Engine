@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import openpyxl
-import scipy
 import random
 import statsmodels.api as sm
 from datetime import datetime, timedelta
@@ -330,7 +329,7 @@ logi_model, reg_model, smearing_factor = train_models(df, selected_product)
 (current_price, cost_price, competitor_price,
  is_promo, is_holiday, pricing_date, is_peak_season) = get_inputs(selected_product)
  
-price_change_pct = 5
+price_change_pct = 7.5
 price_step = current_price * 0.01
  
 min_price = current_price * (1 - price_change_pct/100 )
@@ -586,3 +585,145 @@ elasticity_se = elasticity_std_error(df, selected_product)
 valid_prices = apply_guardrails(
     results_df, guardrails, current_price, competitor_price, elasticity_se
 )
+objective = input("Enter Your Objective (Revenue/Demand Maximization): ").strip().lower()
+if objective == "revenue":
+    objective = "expected_revenue_per_session"
+elif objective == "demand":
+    objective = "expected_quantity_per_session"
+else:
+    raise ValueError("Invalid objective. Enter Revenue or Demand.")
+
+# BOOTSTRAP
+
+def bootstrap_confidence_intervals(
+    reg_df, logi_df, feature_cols, candidate_prices, competitor_price,
+    is_promo, is_holiday, is_peak_season, n_iterations=1000, alpha=0.05):
+
+    boot_revenue = {p: [] for p in candidate_prices}
+    boot_demand = {p: [] for p in candidate_prices}
+
+    for i in range(n_iterations):
+        logi_sample = logi_df.sample(frac=1.0, replace=True)
+        reg_sample = reg_df.sample(frac=1.0, replace=True)
+
+        X_tr_logi = logi_sample[feature_cols]
+        y_tr_logi = logi_sample["bought"]
+        
+        if len(y_tr_logi.unique()) < 2:
+            continue
+
+        b_logi_model = LogisticRegression(max_iter=1000, C=100)
+        b_logi_model.fit(X_tr_logi, y_tr_logi)
+
+        X_tr_reg = reg_sample[feature_cols]
+        y_tr_reg_log = np.log(reg_sample["quantity"])
+        
+        b_reg_model = LinearRegression()
+        b_reg_model.fit(X_tr_reg, y_tr_reg_log)
+
+        b_train_pred_log = b_reg_model.predict(X_tr_reg)
+        b_residuals = y_tr_reg_log - b_train_pred_log
+        b_smearing_factor = np.mean(np.exp(b_residuals))
+
+        for price in candidate_prices:
+            X_cand = pd.DataFrame([{
+                "log_price": np.log(price),
+                "log_cp": np.log(competitor_price),
+                "is_promo": is_promo,
+                "is_holiday": is_holiday,
+                "is_peak_season": is_peak_season
+            }], columns=feature_cols)
+
+            prob = b_logi_model.predict_proba(X_cand)[0, 1]
+            pred_log_qty = b_reg_model.predict(X_cand)[0]
+            pred_qty_bought = np.exp(pred_log_qty) * b_smearing_factor
+
+            expected_qty = prob * pred_qty_bought
+            expected_rev = price * expected_qty
+
+            boot_revenue[price].append(expected_rev)
+            boot_demand[price].append(expected_qty)
+
+    lower_p = (alpha / 2) * 100
+    upper_p = (1 - alpha / 2) * 100
+
+    ci_results = []
+    for price in candidate_prices:
+        rev_lower = np.percentile(boot_revenue[price], lower_p)
+        rev_upper = np.percentile(boot_revenue[price], upper_p)
+        demand_lower = np.percentile(boot_demand[price], lower_p)
+        demand_upper = np.percentile(boot_demand[price], upper_p)
+
+        ci_results.append({
+            "candidate_price": price,
+            "rev_ci_lower": rev_lower,
+            "rev_ci_upper": rev_upper,
+            "demand_ci_lower": demand_lower,
+            "demand_ci_upper": demand_upper
+        })
+
+    return pd.DataFrame(ci_results)
+
+if valid_prices.empty:
+    print("\nNo prices met all guardrail criteria.")
+else:
+    logi_df_train = df[(df["product_id"] == selected_product) & (df["date"] < "2025-01-01")].copy()
+    logi_df_train["log_price"] = np.log(logi_df_train["price_shown"])
+    logi_df_train["log_cp"] = np.log(logi_df_train["competitor_price"])
+    logi_df_train["is_peak_season"] = logi_df_train["date"].dt.month.isin([11, 12]).astype(int)
+
+    reg_df_train = df[(df["product_id"] == selected_product) & (df["bought"] == 1) & (df["quantity"] > 0) & (df["date"] < "2025-01-01")].copy()
+    reg_df_train["log_price"] = np.log(reg_df_train["price_shown"])
+    reg_df_train["log_cp"] = np.log(reg_df_train["competitor_price"])
+    reg_df_train["is_peak_season"] = reg_df_train["date"].dt.month.isin([11, 12]).astype(int)
+
+    ci_df = bootstrap_confidence_intervals(
+        reg_df_train, logi_df_train, feature_cols,
+        valid_prices["candidate_price"].values, competitor_price,
+        is_promo, is_holiday, is_peak_season, n_iterations=200
+    )
+
+    final_valid_df = valid_prices.merge(ci_df, on="candidate_price")
+    optimal_idx = final_valid_df[objective].idxmax()
+    optimal_row = final_valid_df.loc[optimal_idx]
+
+    display_cols = ["candidate_price", objective, "rev_ci_lower", "rev_ci_upper", "demand_ci_lower", "demand_ci_upper", "gross_margin_pct"]
+    print("--- VALID PRICES WITH 95% BOOTSTRAP CONFIDENCE INTERVALS ---")
+    print(final_valid_df[display_cols].round(3).to_string(index=False))
+
+# FINAL
+
+full_eval_df = results_df.merge(ci_df, on="candidate_price", how="left")
+valid_prices_set = set(valid_prices["candidate_price"])
+full_eval_df["passed_guardrails"] = full_eval_df["candidate_price"].isin(valid_prices_set)
+
+recommendations = []
+valid_eval_df = full_eval_df[full_eval_df["passed_guardrails"]]
+optimal_idx = valid_eval_df[objective].idxmax()
+optimal_val = valid_eval_df.loc[optimal_idx, objective]
+
+for idx, row in full_eval_df.iterrows():
+    if not row["passed_guardrails"]:
+        recommendations.append("REJECT")
+    elif idx == optimal_idx:
+        recommendations.append("ADOPT")
+    elif row[objective] >= (optimal_val * 0.985):
+        recommendations.append("REVIEW")
+    else:
+        recommendations.append("REJECT")
+
+full_eval_df["recommendation"] = recommendations
+
+sort_mapping = {"ADOPT": 1, "REVIEW": 2, "REJECT": 3}
+full_eval_df["sort_order"] = full_eval_df["recommendation"].map(sort_mapping)
+full_eval_df = full_eval_df.sort_values(by=["sort_order", objective], ascending=[True, False]).drop(columns=["sort_order"])
+
+display_columns = [
+    "candidate_price", 
+    objective, 
+    "gross_margin_pct", 
+    "recommendation"
+]
+
+print("\n--- FINAL PRICING RECOMMENDATIONS ---")
+print(full_eval_df[display_columns].round(2).to_string(index=False))
