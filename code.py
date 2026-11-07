@@ -11,7 +11,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, r
 
 # EDA and Data Cleaning
 
-df = pd.read_excel("pricepilot_sales_data.xlsx")
+df = pd.read_excel("abc_store_sales.xlsx")
  
 print(df.head())
 print(df.columns)
