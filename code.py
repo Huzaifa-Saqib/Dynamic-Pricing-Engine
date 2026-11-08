@@ -329,8 +329,8 @@ logi_model, reg_model, smearing_factor = train_models(df, selected_product)
 (current_price, cost_price, competitor_price,
  is_promo, is_holiday, pricing_date, is_peak_season) = get_inputs(selected_product)
  
-price_change_pct = 7.5
-price_step = current_price * 0.01
+price_change_pct = 15
+price_step = current_price * 0.025
  
 min_price = current_price * (1 - price_change_pct/100 )
 max_price = current_price * (1 + price_change_pct/100 )
@@ -597,99 +597,109 @@ else:
 
 def bootstrap_confidence_intervals(
     reg_df, logi_df, feature_cols, candidate_prices, competitor_price,
-    is_promo, is_holiday, is_peak_season, n_iterations=1000, alpha=0.05):
+    is_promo, is_holiday, is_peak_season, n_iterations=500, alpha=0.05, seed=42
+):
+    prices_arr  = np.array(candidate_prices)
+    rev_samples = np.full((n_iterations, len(prices_arr)), np.nan)
+    qty_samples = np.full((n_iterations, len(prices_arr)), np.nan)
+    rng = np.random.default_rng(seed)
 
-    boot_revenue = {p: [] for p in candidate_prices}
-    boot_demand = {p: [] for p in candidate_prices}
+    if len(reg_df) < 5 or logi_df["bought"].nunique() < 2:
+        print("Bootstrap: insufficient data — CIs will be NaN.")
+        return pd.DataFrame({
+            "candidate_price": prices_arr,
+            "rev_ci_lower": np.nan, "rev_ci_upper": np.nan,
+            "demand_ci_lower": np.nan, "demand_ci_upper": np.nan,
+        })
 
+    skipped = 0
     for i in range(n_iterations):
-        logi_sample = logi_df.sample(frac=1.0, replace=True)
-        reg_sample = reg_df.sample(frac=1.0, replace=True)
+        logi_s = logi_df.sample(frac=1.0, replace=True, random_state=int(rng.integers(1e9)))
+        reg_s  = reg_df.sample(frac=1.0, replace=True, random_state=int(rng.integers(1e9)))
 
-        X_tr_logi = logi_sample[feature_cols]
-        y_tr_logi = logi_sample["bought"]
-        
-        if len(y_tr_logi.unique()) < 2:
+        if logi_s["bought"].nunique() < 2 or len(reg_s) < 5:
+            skipped += 1
             continue
 
-        b_logi_model = LogisticRegression(max_iter=1000, C=100)
-        b_logi_model.fit(X_tr_logi, y_tr_logi)
+        try:
+            b_logi = LogisticRegression(max_iter=1000, C=100).fit(logi_s[feature_cols], logi_s["bought"])
+            b_reg  = LinearRegression().fit(reg_s[feature_cols], np.log(reg_s["quantity"].clip(lower=1)))
+            b_resid = np.log(reg_s["quantity"].clip(lower=1)) - b_reg.predict(reg_s[feature_cols])
+            b_smear = float(np.exp(b_resid).mean())
+        except Exception:
+            skipped += 1
+            continue
 
-        X_tr_reg = reg_sample[feature_cols]
-        y_tr_reg_log = np.log(reg_sample["quantity"])
-        
-        b_reg_model = LinearRegression()
-        b_reg_model.fit(X_tr_reg, y_tr_reg_log)
+        X_cand = pd.DataFrame([{
+            "log_price": np.log(p),
+            "log_cp": np.log(competitor_price),
+            "is_promo": is_promo,
+            "is_holiday": is_holiday,
+            "is_peak_season": is_peak_season,
+        } for p in prices_arr], columns=feature_cols)
 
-        b_train_pred_log = b_reg_model.predict(X_tr_reg)
-        b_residuals = y_tr_reg_log - b_train_pred_log
-        b_smearing_factor = np.mean(np.exp(b_residuals))
+        prob = b_logi.predict_proba(X_cand)[:, 1]
+        qty  = prob * np.exp(b_reg.predict(X_cand)) * b_smear
+        rev_samples[i] = prices_arr * qty
+        qty_samples[i] = qty
 
-        for price in candidate_prices:
-            X_cand = pd.DataFrame([{
-                "log_price": np.log(price),
-                "log_cp": np.log(competitor_price),
-                "is_promo": is_promo,
-                "is_holiday": is_holiday,
-                "is_peak_season": is_peak_season
-            }], columns=feature_cols)
-
-            prob = b_logi_model.predict_proba(X_cand)[0, 1]
-            pred_log_qty = b_reg_model.predict(X_cand)[0]
-            pred_qty_bought = np.exp(pred_log_qty) * b_smearing_factor
-
-            expected_qty = prob * pred_qty_bought
-            expected_rev = price * expected_qty
-
-            boot_revenue[price].append(expected_rev)
-            boot_demand[price].append(expected_qty)
+    if skipped > 0:
+        print(f"Bootstrap: skipped {skipped}/{n_iterations} degenerate iterations.")
 
     lower_p = (alpha / 2) * 100
     upper_p = (1 - alpha / 2) * 100
 
-    ci_results = []
-    for price in candidate_prices:
-        rev_lower = np.percentile(boot_revenue[price], lower_p)
-        rev_upper = np.percentile(boot_revenue[price], upper_p)
-        demand_lower = np.percentile(boot_demand[price], lower_p)
-        demand_upper = np.percentile(boot_demand[price], upper_p)
+    rows = []
+    for j, price in enumerate(prices_arr):
+        rev_col = rev_samples[:, j]; rev_col = rev_col[~np.isnan(rev_col)]
+        qty_col = qty_samples[:, j]; qty_col = qty_col[~np.isnan(qty_col)]
+        if len(rev_col) == 0:
+            rows.append({"candidate_price": price,
+                         "rev_ci_lower": np.nan, "rev_ci_upper": np.nan,
+                         "demand_ci_lower": np.nan, "demand_ci_upper": np.nan})
+        else:
+            rows.append({"candidate_price": price,
+                         "rev_ci_lower":    np.percentile(rev_col, lower_p),
+                         "rev_ci_upper":    np.percentile(rev_col, upper_p),
+                         "demand_ci_lower": np.percentile(qty_col, lower_p),
+                         "demand_ci_upper": np.percentile(qty_col, upper_p)})
+    return pd.DataFrame(rows)
 
-        ci_results.append({
-            "candidate_price": price,
-            "rev_ci_lower": rev_lower,
-            "rev_ci_upper": rev_upper,
-            "demand_ci_lower": demand_lower,
-            "demand_ci_upper": demand_upper
-        })
 
-    return pd.DataFrame(ci_results)
+#  CI
+
+ci_cols = ["candidate_price", "rev_ci_lower", "rev_ci_upper",
+           "demand_ci_lower", "demand_ci_upper"]
 
 if valid_prices.empty:
-    print("\nNo prices met all guardrail criteria.")
+    print("\nNo prices met all guardrail criteria — marking all candidates REJECT.")
+    ci_df = pd.DataFrame(columns=ci_cols)
 else:
     logi_df_train = df[(df["product_id"] == selected_product) & (df["date"] < "2025-01-01")].copy()
-    logi_df_train["log_price"] = np.log(logi_df_train["price_shown"])
-    logi_df_train["log_cp"] = np.log(logi_df_train["competitor_price"])
+    logi_df_train["log_price"]     = np.log(logi_df_train["price_shown"])
+    logi_df_train["log_cp"]        = np.log(logi_df_train["competitor_price"])
     logi_df_train["is_peak_season"] = logi_df_train["date"].dt.month.isin([11, 12]).astype(int)
 
-    reg_df_train = df[(df["product_id"] == selected_product) & (df["bought"] == 1) & (df["quantity"] > 0) & (df["date"] < "2025-01-01")].copy()
-    reg_df_train["log_price"] = np.log(reg_df_train["price_shown"])
-    reg_df_train["log_cp"] = np.log(reg_df_train["competitor_price"])
+    reg_df_train = df[(df["product_id"] == selected_product)
+                      & (df["bought"] == 1)
+                      & (df["quantity"] > 0)
+                      & (df["date"] < "2025-01-01")].copy()
+    reg_df_train["log_price"]     = np.log(reg_df_train["price_shown"])
+    reg_df_train["log_cp"]        = np.log(reg_df_train["competitor_price"])
     reg_df_train["is_peak_season"] = reg_df_train["date"].dt.month.isin([11, 12]).astype(int)
 
     ci_df = bootstrap_confidence_intervals(
         reg_df_train, logi_df_train, feature_cols,
         valid_prices["candidate_price"].values, competitor_price,
-        is_promo, is_holiday, is_peak_season, n_iterations=200
+        is_promo, is_holiday, is_peak_season, n_iterations=500,
     )
 
     final_valid_df = valid_prices.merge(ci_df, on="candidate_price")
-    optimal_idx = final_valid_df[objective].idxmax()
-    optimal_row = final_valid_df.loc[optimal_idx]
-
-    display_cols = ["candidate_price", objective, "rev_ci_lower", "rev_ci_upper", "demand_ci_lower", "demand_ci_upper", "gross_margin_pct"]
+    display_cols = ["candidate_price", objective, "rev_ci_lower", "rev_ci_upper",
+                    "demand_ci_lower", "demand_ci_upper", "gross_margin_pct"]
     print("--- VALID PRICES WITH 95% BOOTSTRAP CONFIDENCE INTERVALS ---")
     print(final_valid_df[display_cols].round(3).to_string(index=False))
+
 
 # FINAL
 
@@ -697,33 +707,47 @@ full_eval_df = results_df.merge(ci_df, on="candidate_price", how="left")
 valid_prices_set = set(valid_prices["candidate_price"])
 full_eval_df["passed_guardrails"] = full_eval_df["candidate_price"].isin(valid_prices_set)
 
-recommendations = []
 valid_eval_df = full_eval_df[full_eval_df["passed_guardrails"]]
-optimal_idx = valid_eval_df[objective].idxmax()
-optimal_val = valid_eval_df.loc[optimal_idx, objective]
 
-for idx, row in full_eval_df.iterrows():
-    if not row["passed_guardrails"]:
-        recommendations.append("REJECT")
-    elif idx == optimal_idx:
-        recommendations.append("ADOPT")
-    elif row[objective] >= (optimal_val * 0.985):
-        recommendations.append("REVIEW")
+if valid_eval_df.empty:
+    print("\nNo prices passed guardrails — every candidate marked REJECT.")
+    full_eval_df["recommendation"] = "REJECT"
+    adopt_price_str = None
+else:
+    optimal_idx = valid_eval_df[objective].idxmax()
+
+    if objective == "expected_revenue_per_session":
+        adopt_floor = valid_eval_df.loc[optimal_idx, "rev_ci_lower"]
+        cmp_col     = "rev_ci_upper"
     else:
-        recommendations.append("REJECT")
+        adopt_floor = valid_eval_df.loc[optimal_idx, "demand_ci_lower"]
+        cmp_col     = "demand_ci_upper"
 
-full_eval_df["recommendation"] = recommendations
+    recommendations = []
+    for idx, row in full_eval_df.iterrows():
+        if not row["passed_guardrails"]:
+            recommendations.append("REJECT")
+        elif idx == optimal_idx:
+            recommendations.append("ADOPT")
+        elif pd.notna(row[cmp_col]) and row[cmp_col] >= adopt_floor:
+            recommendations.append("REVIEW")
+        else:
+            recommendations.append("REJECT")
+    full_eval_df["recommendation"] = recommendations
+
+    adopt_price = float(full_eval_df.loc[optimal_idx, "candidate_price"])
+    adopt_price_str = f"{int(adopt_price):,}" if adopt_price == int(adopt_price) else f"{adopt_price:,.2f}"
 
 sort_mapping = {"ADOPT": 1, "REVIEW": 2, "REJECT": 3}
 full_eval_df["sort_order"] = full_eval_df["recommendation"].map(sort_mapping)
-full_eval_df = full_eval_df.sort_values(by=["sort_order", objective], ascending=[True, False]).drop(columns=["sort_order"])
+full_eval_df = (full_eval_df
+                .sort_values(by=["sort_order", objective], ascending=[True, False])
+                .drop(columns=["sort_order"]))
 
-display_columns = [
-    "candidate_price", 
-    objective, 
-    "gross_margin_pct", 
-    "recommendation"
-]
+display_columns = ["candidate_price", objective, "gross_margin_pct", "recommendation"]
 
-print("\n--- FINAL PRICING RECOMMENDATIONS ---")
+print("\n--- FINAL PRICING RECOMMENDATIONS---")
+if adopt_price_str is not None:
+    print(f"ADOPT PRICE: {adopt_price_str}")
+
 print(full_eval_df[display_columns].round(2).to_string(index=False))
