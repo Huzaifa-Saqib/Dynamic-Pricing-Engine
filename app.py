@@ -332,7 +332,7 @@ with st.status("⚙️ Initializing Pricing Engine...", expanded=True) as status
 
 # --- DISPLAY METRICS ---
 st.markdown("### 📊 Model Performance")
-c1, c2, c3 = st.columns(4)
+c1, c2, c3, c4 = st.columns(4)
 c1.metric("Logistic AUC", f"{auc:.2f}" if auc > 0 else "—")
 c2.metric("Regression R²", f"{r2:.2f}")
 c3.metric("Price Elasticity", f"{elasticity:.2f}")
