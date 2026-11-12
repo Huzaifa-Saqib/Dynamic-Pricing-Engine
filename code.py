@@ -585,6 +585,10 @@ elasticity_se = elasticity_std_error(df, selected_product)
 valid_prices = apply_guardrails(
     results_df, guardrails, current_price, competitor_price, elasticity_se
 )
+
+print("\n--- MODEL CONFIDENCE ---")
+print(f"Elasticity Standard Error: {elasticity_se:.2f}")
+
 objective = input("Enter Your Objective (Revenue/Demand Maximization): ").strip().lower()
 if objective == "revenue":
     objective = "expected_revenue_per_session"

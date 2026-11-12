@@ -332,10 +332,11 @@ with st.status("⚙️ Initializing Pricing Engine...", expanded=True) as status
 
 # --- DISPLAY METRICS ---
 st.markdown("### 📊 Model Performance")
-c1, c2, c3 = st.columns(3)
-c1.metric("Logistic AUC", f"{auc:.3f}" if auc > 0 else "—")
-c2.metric("Regression R²", f"{r2:.3f}")
-c3.metric("Price Elasticity", f"{elasticity:.3f}")
+c1, c2, c3 = st.columns(4)
+c1.metric("Logistic AUC", f"{auc:.2f}" if auc > 0 else "—")
+c2.metric("Regression R²", f"{r2:.2f}")
+c3.metric("Price Elasticity", f"{elasticity:.2f}")
+c4.metric("Elasticity Std. Error", f"{elasticity_se:.2f}")
 
 # --- DISPLAY CHART (Dynamic 1-Line Chart) ---
 st.markdown("### 📈 Simulation Results")
